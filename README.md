@@ -7,9 +7,22 @@ A multi-modal deep learning classification framework using multi-input Physics-I
 * **Physics & Simulation Engine:** Yugansh Bijalwan
 
 ## 📁 Repository Structure
-* `/simulation/` - Contains the 1D numerical physics engine and filter matrices (LIV, ALP, Shock).
-* `/network/` - Contains the PyTorch multi-input classifier architecture and training loops.
-* `/data/` - Synthetic data generation logs and telemetry profiles.
+grb-pinn/
+│
+├── simulations/      # Mock data and physics simulation outputs
+├── preprocessing/    # Scaling, normalization, tensor conversion
+├── models/           # Neural network architectures and branches
+├── training/         # Training loops, losses, optimization
+├── evaluation/       # Metrics, confusion matrices, visualizations
+├── experiments/      # Sandbox files for learning and testing concepts
+├── docs/             # Notes, architecture decisions, project documentation
+│
+├── main.py           # Main project entry point
+├── requirements.txt  # Python package dependencies
+├── README.md         # Project overview and setup instructions
+└── .gitignore        # Files and folders excluded from Git
+
+The repository is organized to separate simulation outputs, preprocessing, model development, training, evaluation, and experimental testing, enabling **parallel development** of the physics engine and AI classification pipeline.
 
 ## 🛠️ Getting Started
 *(Instructions for environment configuration will be updated during Phase 2).*
