@@ -7,22 +7,26 @@ A multi-modal deep learning classification framework using multi-input Physics-I
 * **Physics & Simulation Engine:** Yugansh Bijalwan
 
 ## 📁 Repository Structure
+
+```text
 grb-pinn/
 │
 ├── simulations/      # Mock data and physics simulation outputs
 ├── preprocessing/    # Scaling, normalization, tensor conversion
 ├── models/           # Neural network architectures and branches
-├── training/         # Training loops, losses, optimization
-├── evaluation/       # Metrics, confusion matrices, visualizations
+├── training/         # Training loops, losses, and optimization
+├── evaluation/       # Metrics, confusion matrices, and visualizations
 ├── experiments/      # Sandbox files for learning and testing concepts
-├── docs/             # Notes, architecture decisions, project documentation
+├── docs/             # Notes, architecture decisions, and documentation
 │
 ├── main.py           # Main project entry point
 ├── requirements.txt  # Python package dependencies
 ├── README.md         # Project overview and setup instructions
 └── .gitignore        # Files and folders excluded from Git
+```
 
-The repository is organized to separate simulation outputs, preprocessing, model development, training, evaluation, and experimental testing, enabling **parallel development** of the physics engine and AI classification pipeline.
+### Overview
+This repository is organized to support the development of a multi-modal deep learning framework for classifying competing high-energy astrophysical signatures. The structure separates simulation outputs, preprocessing, model development, training, evaluation, and experimental testing, allowing parallel development of the physics simulation engine and AI classification pipeline.
 
 ## 🛠️ Getting Started
 *(Instructions for environment configuration will be updated during Phase 2).*
