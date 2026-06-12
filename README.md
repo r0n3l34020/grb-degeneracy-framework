@@ -3,13 +3,13 @@
 A multi-modal deep learning classification framework using multi-input Physics-Informed Neural Networks (PINNs) to isolate signatures of Axion-Like Particles (ALPs) and Lorentz Invariance Violation (LIV) from conventional relativistic shock emissions.
 
 ## 👥 Research Team
-* **AI & Neural Network Architecture:** Ronel Jonathan
-* **Physics & Simulation Engine:** Yugansh Bijalwan
+* **AI & Neural Network Architecture:** Yugansh Bijalwan
+* **Physics & Simulation Engine:** Ronel Jonathan
 
 ## 📁 Repository Structure
 
 ```text
-grb-pinn/
+multi-modal-grb-classifier/
 │
 ├── simulations/      # Mock data and physics simulation outputs
 ├── preprocessing/    # Scaling, normalization, tensor conversion
@@ -28,5 +28,10 @@ grb-pinn/
 ### Overview
 This repository is organized to support the development of a multi-modal deep learning framework for classifying competing high-energy astrophysical signatures. The structure separates simulation outputs, preprocessing, model development, training, evaluation, and experimental testing, allowing parallel development of the physics simulation engine and AI classification pipeline.
 
-## 🛠️ Getting Started
-*(Instructions for environment configuration will be updated during Phase 2).*
+## Computational Roadmap
+
+- **Physics Engine:** 1D transport pipeline for ALP, LIV, and shock simulation.
+
+- **Classification Engine:** Multi-headed neural network for degeneracy resolution.
+
+- **Status:** In active development (Phase 1: Theoretical Standardization).
