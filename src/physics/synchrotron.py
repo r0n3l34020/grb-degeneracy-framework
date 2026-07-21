@@ -1,6 +1,33 @@
+<<<<<<< HEAD
+import numpy
+=======
 import numpy
 import matplotlib.pyplot as plt
+>>>>>>> 03eda183096bd9b72bb48277a0f1ba1fd5283629
 
+<<<<<<< HEAD
+flux_list = []
+
+f_break = float(1.0)
+
+nu_list = [10, 20, 100, 200]
+
+p = float(input("What do you want the electron distribution index to be?"))
+
+alpha_1 = (p-1)/2
+alpha_2 = alpha_1 + 0.5
+
+for i in nu_list:
+    if i <= 50:
+        result = f_break * (i / 50) ** (-alpha_1)
+        flux_list.append(result)
+    
+    else:
+        result = f_break * (i / 50) ** (-alpha_2)
+        flux_list.append(result)
+
+print(flux_list)
+=======
 def synchrotron_signature(E_break, energy_grid, alpha, beta, f_break):
 
     """
@@ -38,3 +65,4 @@ if __name__ == "__main__":
     plt.ylabel("Flux")
     plt.grid(True, which="both", ls="-")
     plt.show()
+>>>>>>> 03eda183096bd9b72bb48277a0f1ba1fd5283629
