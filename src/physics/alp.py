@@ -10,8 +10,8 @@ def photon_survival_probability(initial_energy_grid, g_ag, B, L, f_E_func):
     return photon_survival
 
 def apply_alp_to_spectrum(matrix_2d, photon_survival):
-    expanded_1d_matrix = photon_survival[:, np.newaxis]
-    alp_matrix_2d = expanded_1d_matrix * matrix_2d
+    expanded_1d_matrix = photon_survival[np.newaxis, :]
+    alp_matrix_2d = matrix_2d * expanded_1d_matrix
     return alp_matrix_2d
 
 """
