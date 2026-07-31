@@ -1,28 +1,50 @@
 import numpy
 from pathlib import Path
+import math
 import shutil
 from synchrotron import simulate_grb_emission
 from liv import apply_liv_to_spectrum
 from alp import apply_alp_to_spectrum, photon_survival_probability
 from sampler import generate_lhs_parameter_batch
 from operator import itemgetter
+from src.utils.fisher import compute_cramer_rao_bounds, compute_fisher_matrix, compute_flux_jacobian, fisher_estimator_pipeline
+import concurrent.futures
 
 scenario_mode = ["ssc", "alp", "liv"]
-
+target_folder = Path('C:/Users/Ronel/Desktop/multi-modal-grb-classifier/grb-degeneracy-framework/grb-degeneracy-framework/data/synthetic/test_datasets')
 # All bounds converted to match the 'energy_grid' scale
 parameter_bounds = {
-    "E_break_bounds": (1e+5, 1e+6),
-    "eqg_bounds": (1e+26, 1e+28),
-    "g_ag_bounds": (1e-21, 1e-19),
-    "B_bounds": (1e-6, 1e-5),
-    "L_bounds": (1000.0, 10000.0),
-    "p_bounds": (1.5, 3.0),
-    "t_rise_bounds": (1.0, 5.0),
-    "t_decay_bounds": (5.0, 30.0)
+    "E_break": (1e+5, 1e+6),
+    "eqg": (1e+26, 1e+28),
+    "g_ag": (1e-21, 1e-19),
+    "B": (1e-6, 1e-5),
+    "L": (1000.0, 10000.0),
+    "p": (1.5, 3.0),
+    "t_rise": (1.0, 5.0),
+    "t_decay": (5.0, 30.0)
 }
 
+target_params = [
+    "E_break",
+    "g_ag",
+    "B",
+    "L",
+    "eqg",
+]
+
+snr_choices = [5, 15, 50]
+repeats = 20
+snr_pool = numpy.repeat(snr_choices, repeats)
+snr_range = numpy.random.default_rng()
+snr_range.shuffle(snr_pool)
+
+obs_mode_choices = ["spectral_only", "spectral_temporal", "full_polarimetric"]
+obs_mode_pool = numpy.repeat(obs_mode_choices, repeats)
+obs_mode_range = numpy.random.default_rng()
+obs_mode_range.shuffle(obs_mode_pool)
+
 def compute_polarization_profile(initial_energy_grid, time_grid, mode, g_ag, B, L):
-    base_pd = numpy.random.uniform(0.10, 0.20)
+    base_pd = 0.15
 
     if mode in ("ssc", "liv"):
         pd_matrix = base_pd + (0 * initial_energy_grid[None, :]) + (0 * time_grid)
@@ -69,8 +91,32 @@ def generate_grb_event(random_param, mode):
 
     return observation_matrix_3d
 
+def process_single_simulation(args):
+    i, random_param, mode, snr, obs_mode = args
+
+    observation_matrix_3d = generate_grb_event(random_param, mode)
+    assert observation_matrix_3d.shape == (3, 500, 500), f"Error, expected shape (3, 500, 500) got {observation_matrix_3d.shape}"
+    assert not numpy.any(numpy.isnan(observation_matrix_3d)), "Error, matrix contains NaN values"
+    assert not numpy.any(numpy.isinf(observation_matrix_3d)), "Error, matrix contains infinite values"
+
+    print(f"Successfully created {int(i)+1} GRB event(s)")
+
+    active_params_matrix = fisher_estimator_pipeline(random_param, mode)
+
+    jacobian_observation_matrix_3d = compute_flux_jacobian(active_params_matrix, mode, obs_mode)
+
+    fisher_jacobian_observation_matrix_3d = compute_fisher_matrix(jacobian_observation_matrix_3d, active_params_matrix, snr)
+
+    cramer_rao_extraction, covariance_matrix_final = compute_cramer_rao_bounds(fisher_jacobian_observation_matrix_3d, active_params_matrix)
+
+    final_filename = f"simulation_{i}_{obs_mode}.npy"
+    numpy.savez(target_folder / final_filename, fisher_jacobian_observation_matrix_3d, covariance_matrix_final, cramer_rao_extraction)
+
+    print(f"Successfully saved No.{int(i)+1} for all 3 outputs")
+
+# Main Generation Script
+
 if __name__ == "__main__":
-    target_folder = Path('C:/Users/Ronel/Desktop/multi-modal-grb-classifier/grb-degeneracy-framework/grb-degeneracy-framework/data/synthetic/test_datasets')
     if target_folder.exists():
         shutil.rmtree(target_folder)
     target_folder.mkdir(parents=True, exist_ok=True)
@@ -81,58 +127,17 @@ if __name__ == "__main__":
 
     sampled_batch = generate_lhs_parameter_batch(num_samples=60, parameter_bounds=parameter_bounds)
 
+    tasks = []
     for i, random_param in enumerate(sampled_batch):
         mode = scenario_mode[i % len(scenario_mode)]
+        snr = snr_pool[i]
+        obs_mode = obs_mode_pool[i]
 
         random_param["initial_energy_grid"] = initial_energy_grid
         random_param["initial_time_grid"] = initial_time_grid
         random_param["energy_grid"] = energy_grid
         random_param["time_grid"] = time_grid
 
-        observation_matrix_3d = generate_grb_event(random_param, mode)
-        assert observation_matrix_3d.shape == (3, 500, 500), f"Error, expected shape (3, 500, 500) got {observation_matrix_3d.shape}"
-        assert not numpy.any(numpy.isnan(observation_matrix_3d)), "Error, matrix contains NaN values"
-        assert not numpy.any(numpy.isinf(observation_matrix_3d)), "Error, matrix contains infinite values"
-
-        final_filename = f"simulation_{i}.npy"
-        numpy.save(target_folder / final_filename, observation_matrix_3d)
-
-        print(f"Successfully saved No.{int(i)+1} 3D observation matrix")
-
-
-    def compute_flux_jacobian(random_param, mode):
-        target_params = [
-            "E_break",
-            "g_ag",
-            "B",
-            "L",
-            "eqg",
-        ]
-        epsilon = 1e-4
-        jacobian_dict = {}
-
-        for key in target_params:
-            val = random_param[key]
-            final_val = val if val != 0 else 1e-8
-            delta = epsilon * final_val
-
-            param_up = random_param.copy()
-            param_up[key] += delta
-            flux_up = generate_grb_event(param_up, mode)
-
-            param_down = random_param.copy()
-            param_down[key] -= delta
-            flux_down = generate_grb_event(param_down, mode)
-
-            derivative_matrix = (flux_up - flux_down) / (2 * delta)
-            jacobian_dict[key] = derivative_matrix
-
-        return jacobian_dict
-
-    def compute_fisher_matrix(jacobian_dict, target_params):
-        noise_level_value = 1e-2
-        sigma_squared = numpy.full((3, 500, 500), noise_level_value)
-
-        fisher_matrix = numpy.zeros((len(target_params), len(target_params)))
-
-    
+        tasks.append((i, random_param, mode, snr, obs_mode))
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        executor.map(process_single_simulation, tasks)
