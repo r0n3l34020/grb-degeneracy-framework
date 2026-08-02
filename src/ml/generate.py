@@ -14,7 +14,7 @@ if str(_PHYSICS_DIR) not in sys.path:
 from src.physics.synchrotron import simulate_grb_emission, fred_light_curve
 from src.physics.liv import apply_liv_to_spectrum
 from src.physics.alp import apply_alp_to_spectrum, photon_survival_probability
-from src.ml.dataset import inject_noise
+from src.ml.dataset import inject_noise, validate_tensor, save_dataset_hdf5
 
 PHYSICS_MODELS = ("standard", "liv", "alp")
 ENERGY_BINS = 100
@@ -108,38 +108,47 @@ def generate_grb_event(physics_model: str = "standard", snr: float = DEFAULT_SNR
 
 def generate_dataset(num_samples: int = 1000, snr: float = DEFAULT_SNR,
                       energy_bins: int = ENERGY_BINS, time_bins: int = TIME_BINS,
-                      out_dir: Path = None, seed: int = 0):
-    """Generate `num_samples` events (physics model chosen uniformly at random) and save each to disk."""
+                      out_path: Path = None, seed: int = 0):
+    """
+    Generate `num_samples` events (physics model chosen uniformly at random) and save
+    them as one consolidated HDF5 file (Day 6) for high-speed loading, instead of
+    thousands of individual .npy files.
+    """
     rng = np.random.default_rng(seed)
-    out_dir = Path(out_dir) if out_dir else Path(__file__).resolve().parents[2] / "data" / "synthetic" / "events"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = Path(out_path) if out_path else (
+        Path(__file__).resolve().parents[2] / "data" / "synthetic" / "events.h5"
+    )
 
+    tensors = np.empty((num_samples, 3, energy_bins, time_bins), dtype=np.float32)
+    labels = []
     all_metadata = []
     for i in range(num_samples):
-        physics_model = rng.choice(PHYSICS_MODELS)
+        physics_model = str(rng.choice(PHYSICS_MODELS))
         tensor, metadata = generate_grb_event(physics_model, snr=snr, energy_bins=energy_bins,
                                                time_bins=time_bins, rng=rng)
-        assert not np.any(np.isnan(tensor)), f"Error, event {i} contains NaN values"
-        assert not np.any(np.isinf(tensor)), f"Error, event {i} contains infinite values"
+        validate_tensor(tensor, name=f"event {i} ({physics_model})")
 
-        filename = f"event_{i:05d}_{physics_model}.npy"
-        np.save(out_dir / filename, tensor)
-        metadata["filename"] = filename
+        tensors[i] = tensor
+        labels.append(physics_model)
         all_metadata.append(metadata)
 
-    with open(out_dir / "labels.json", "w") as f:
+    save_dataset_hdf5(tensors, labels, out_path)
+
+    metadata_path = out_path.with_suffix(".json")
+    with open(metadata_path, "w") as f:
         json.dump(all_metadata, f, indent=2)
 
-    return all_metadata
+    return out_path, all_metadata
 
 
 if __name__ == "__main__":
     import time
 
     start = time.perf_counter()
-    metadata = generate_dataset(num_samples=1000)
+    out_path, metadata = generate_dataset(num_samples=1000)
     elapsed = time.perf_counter() - start
 
     print(f"Generated {len(metadata)} events in {elapsed:.2f}s ({elapsed / len(metadata) * 1000:.2f} ms/event)")
+    print(f"Saved consolidated dataset to {out_path}")
     counts = {m: sum(1 for x in metadata if x["physics_model"] == m) for m in PHYSICS_MODELS}
     print("Class balance:", counts)

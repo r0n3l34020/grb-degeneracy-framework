@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -8,6 +9,12 @@ from src.ml.dataset import (
     add_gaussian_noise,
     add_poisson_noise,
     inject_noise,
+    validate_tensor,
+    save_dataset_hdf5,
+    load_dataset_hdf5,
+    HDF5GRBDataset,
+    save_dataset_pt,
+    load_dataset_pt,
 )
 
 
@@ -63,3 +70,59 @@ def test_inject_noise_preserves_shape_and_is_finite():
     assert noisy.shape == signal.shape
     assert not np.any(np.isnan(noisy)), "Error, noisy signal contains NaN values"
     assert not np.any(np.isinf(noisy)), "Error, noisy signal contains infinite values"
+
+
+def test_validate_tensor_passes_clean_data():
+    validate_tensor(np.ones((3, 4, 4)), name="clean")  # should not raise
+
+
+def test_validate_tensor_rejects_nan():
+    bad = np.ones((3, 4, 4))
+    bad[0, 0, 0] = np.nan
+    with pytest.raises(ValueError, match="NaN"):
+        validate_tensor(bad, name="edge-case tensor")
+
+
+def test_validate_tensor_rejects_inf():
+    bad = np.ones((3, 4, 4))
+    bad[0, 0, 0] = np.inf
+    with pytest.raises(ValueError, match="infinite"):
+        validate_tensor(bad, name="edge-case tensor")
+
+
+def test_hdf5_dataset_round_trip(tmp_path):
+    rng = np.random.default_rng(seed=7)
+    tensors = rng.normal(size=(10, 3, 5, 5)).astype(np.float32)
+    labels = ["standard"] * 4 + ["liv"] * 3 + ["alp"] * 3
+
+    path = save_dataset_hdf5(tensors, labels, tmp_path / "events.h5")
+    loaded_tensors, label_ids, label_map = load_dataset_hdf5(path)
+
+    assert np.allclose(loaded_tensors, tensors)
+    assert set(label_map.keys()) == {"standard", "liv", "alp"}
+    assert label_ids.shape == (10,)
+
+    dataset = HDF5GRBDataset(path)
+    assert len(dataset) == 10
+    sample_tensor, sample_label = dataset[0]
+    assert sample_tensor.shape == (3, 5, 5)
+    assert sample_label.item() == label_map["standard"]
+
+
+def test_hdf5_saver_rejects_nan(tmp_path):
+    tensors = np.full((2, 3, 4, 4), np.nan, dtype=np.float32)
+    with pytest.raises(ValueError, match="NaN"):
+        save_dataset_hdf5(tensors, ["standard", "liv"], tmp_path / "bad.h5")
+
+
+def test_pt_dataset_round_trip(tmp_path):
+    rng = np.random.default_rng(seed=8)
+    tensors = rng.normal(size=(6, 3, 5, 5)).astype(np.float32)
+    labels = ["standard"] * 3 + ["alp"] * 3
+
+    path = save_dataset_pt(tensors, labels, tmp_path / "events.pt")
+    loaded_tensors, label_ids, label_map = load_dataset_pt(path)
+
+    assert torch.allclose(loaded_tensors, torch.from_numpy(tensors))
+    assert set(label_map.keys()) == {"standard", "alp"}
+    assert label_ids.shape == (6,)

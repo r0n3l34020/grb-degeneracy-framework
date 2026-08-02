@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+
+import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -53,6 +57,90 @@ def inject_noise(signal: np.ndarray, snr: float, include_poisson: bool = True,
     noisy = add_poisson_noise(signal, rng=rng) if include_poisson else signal.copy()
     noisy, _ = add_gaussian_noise(noisy, snr, rng=rng)
     return noisy
+
+
+# --- Data validation --------------------------------------------------------
+# Edge-case physics parameters (e.g. near-zero t_decay, extreme E_break) can drive
+# the forward model into NaN/Inf territory. Catch that here before it silently
+# corrupts a serialized dataset or a training run.
+
+
+def validate_tensor(tensor: np.ndarray, name: str = "tensor") -> None:
+    if np.any(np.isnan(tensor)):
+        raise ValueError(f"Error, {name} contains NaN values")
+    if np.any(np.isinf(tensor)):
+        raise ValueError(f"Error, {name} contains infinite values")
+
+
+# --- Dataset serialization ---------------------------------------------------
+# Consolidates many individual events into one file for high-speed loading,
+# instead of opening thousands of tiny .npy files at train time.
+
+
+def save_dataset_hdf5(tensors: np.ndarray, labels: list, path) -> Path:
+    """tensors: (N, 3, Energy_Bins, Time_Bins) array. labels: list[str] of length N (physics_model per event)."""
+    validate_tensor(tensors, name="dataset tensor stack")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    label_map = {name: i for i, name in enumerate(sorted(set(labels)))}
+    label_ids = np.array([label_map[label] for label in labels], dtype=np.int64)
+
+    with h5py.File(path, "w") as f:
+        f.create_dataset("tensors", data=tensors, compression="gzip", compression_opts=4)
+        f.create_dataset("labels", data=label_ids)
+        f.attrs["label_map"] = json.dumps(label_map)
+    return path
+
+
+def load_dataset_hdf5(path):
+    with h5py.File(path, "r") as f:
+        tensors = f["tensors"][:]
+        label_ids = f["labels"][:]
+        label_map = json.loads(f.attrs["label_map"])
+    return tensors, label_ids, label_map
+
+
+class HDF5GRBDataset(Dataset):
+    """High-speed loader for a consolidated HDF5 event file (Day 6)."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        with h5py.File(self.path, "r") as f:
+            self.length = f["tensors"].shape[0]
+            self.label_map = json.loads(f.attrs["label_map"])
+        self._file = None  # opened lazily so each DataLoader worker gets its own handle
+
+    def _ensure_open(self):
+        if self._file is None:
+            self._file = h5py.File(self.path, "r")
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        self._ensure_open()
+        tensor = torch.from_numpy(self._file["tensors"][idx])
+        label = torch.tensor(int(self._file["labels"][idx]), dtype=torch.long)
+        return tensor, label
+
+
+def save_dataset_pt(tensors: np.ndarray, labels: list, path) -> Path:
+    """Alternative to HDF5: a single torch .pt file, fully loaded into memory on read."""
+    validate_tensor(tensors, name="dataset tensor stack")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    label_map = {name: i for i, name in enumerate(sorted(set(labels)))}
+    label_ids = torch.tensor([label_map[label] for label in labels], dtype=torch.long)
+
+    torch.save({"tensors": torch.from_numpy(tensors), "labels": label_ids, "label_map": label_map}, path)
+    return path
+
+
+def load_dataset_pt(path):
+    payload = torch.load(path, weights_only=False)
+    return payload["tensors"], payload["labels"], payload["label_map"]
 
 
 if __name__ == "__main__":
