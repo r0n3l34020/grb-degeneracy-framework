@@ -1,17 +1,9 @@
-import sys
 import json
 import multiprocessing as mp
 from pathlib import Path
 
 import h5py
 import numpy as np
-
-# synchrotron.py does `from liv import ...` / `from alp import ...` (bare, not package-qualified),
-# which only resolves if src/physics/ itself is on sys.path. We don't touch that file, so we shim
-# sys.path here instead — this only affects imports inside this process, nothing on disk.
-_PHYSICS_DIR = Path(__file__).resolve().parents[2] / "src" / "physics"
-if str(_PHYSICS_DIR) not in sys.path:
-    sys.path.insert(0, str(_PHYSICS_DIR))
 
 from src.physics.synchrotron import simulate_grb_emission, fred_light_curve
 from src.physics.liv import apply_liv_to_spectrum
