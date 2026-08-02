@@ -1,54 +1,73 @@
 import numpy as np
+import pytest
 from src.utils.fisher import (
-    numerical_jacobian,
     compute_fisher_matrix,
-    invert_fisher_matrix,
-    plot_error_ellipse,
-    liv_spectral_index_fisher_ellipse,
+    fisher_estimator_pipeline,
+    compute_cramer_rao_bounds,
 )
 
 
-def test_numerical_jacobian_matches_known_linear_model():
-    # model(theta) = A @ theta -> Jacobian should just be A, independent of theta.
-    A = np.array([[2.0, 0.0], [0.0, 3.0], [1.0, 1.0]])
-    model_func = lambda theta: A @ theta
+def test_compute_fisher_matrix_matches_hand_calculation():
+    # Two params with constant derivatives over a 4-element "data" array, snr=1
+    # (sigma^2 = 1e-2 / snr^2 = 1e-2 here, constant everywhere).
+    jacobian_dict = {
+        "a": np.array([1.0, 1.0, 1.0, 1.0]),
+        "b": np.array([2.0, 0.0, 0.0, 0.0]),
+    }
+    fisher_matrix = compute_fisher_matrix(jacobian_dict, ["a", "b"], snr=1.0)
 
-    jac = numerical_jacobian(model_func, np.array([1.0, 1.0]), eps=1e-4)
-    assert np.allclose(jac, A, atol=1e-6)
-
-
-def test_fisher_matrix_matches_analytic_linear_gaussian_case():
-    # For a linear Gaussian model y = A @ theta + noise(sigma), the closed-form
-    # Fisher matrix is F = A^T A / sigma^2 — use this to validate compute_fisher_matrix.
-    A = np.array([[2.0, 0.0], [0.0, 3.0], [1.0, 1.0]])
-    sigma = 2.0
-    model_func = lambda theta: A @ theta
-
-    fisher_matrix = compute_fisher_matrix(model_func, np.array([1.0, 1.0]), sigma, eps=1e-4)
-    expected = (A.T @ A) / sigma ** 2
-    assert np.allclose(fisher_matrix, expected, atol=1e-4)
+    sigma_squared = 1e-2
+    expected = np.array([
+        [np.sum(jacobian_dict["a"] ** 2) / sigma_squared, np.sum(jacobian_dict["a"] * jacobian_dict["b"]) / sigma_squared],
+        [np.sum(jacobian_dict["b"] * jacobian_dict["a"]) / sigma_squared, np.sum(jacobian_dict["b"] ** 2) / sigma_squared],
+    ])
+    assert np.allclose(fisher_matrix, expected)
 
 
-def test_invert_fisher_matrix_cramer_rao_bound():
-    fisher_matrix = np.array([[4.0, 0.0], [0.0, 9.0]])  # diagonal -> trivial to check by hand
-    covariance, variances = invert_fisher_matrix(fisher_matrix)
+def test_compute_fisher_matrix_scales_inversely_with_snr_squared():
+    jacobian_dict = {"a": np.array([1.0, 2.0, 3.0])}
+    f_low_snr = compute_fisher_matrix(jacobian_dict, ["a"], snr=1.0)
+    f_high_snr = compute_fisher_matrix(jacobian_dict, ["a"], snr=10.0)
+    assert np.isclose(f_high_snr[0, 0], f_low_snr[0, 0] * 100)  # F ~ snr^2
+
+
+def test_fisher_estimator_pipeline_selects_correct_params_per_mode():
+    random_param = {"E_break": 1e3, "B": 1e-5, "L": 5000.0, "g_ag": 1e-10, "eqg": 1e18, "unused": 42}
+
+    assert fisher_estimator_pipeline(random_param, "ssc") == {"E_break": 1e3, "B": 1e-5, "L": 5000.0}
+    assert fisher_estimator_pipeline(random_param, "alp") == {
+        "E_break": 1e3, "g_ag": 1e-10, "B": 1e-5, "L": 5000.0,
+    }
+    assert fisher_estimator_pipeline(random_param, "liv") == {
+        "E_break": 1e3, "eqg": 1e18, "B": 1e-5, "L": 5000.0,
+    }
+
+
+def test_fisher_estimator_pipeline_missing_key_returns_not_found():
+    result = fisher_estimator_pipeline({"E_break": 1e3}, "ssc")
+    assert result["B"] == "Not Found"
+
+
+def test_compute_cramer_rao_bounds_matches_hand_calculation_for_diagonal_matrix():
+    fisher_matrix = np.array([[4.0, 0.0], [0.0, 9.0]])
+    error_bounds, covariance = compute_cramer_rao_bounds(fisher_matrix, ["a", "b"])
 
     assert np.allclose(covariance, np.array([[0.25, 0.0], [0.0, 1 / 9]]))
-    assert np.allclose(variances, np.array([0.25, 1 / 9]))
+    assert np.allclose(error_bounds, np.array([0.5, 1 / 3]))
 
 
-def test_plot_error_ellipse_produces_positive_dimensions():
-    covariance = np.array([[0.25, 0.05], [0.05, 1 / 9]])
-    _, ellipse = plot_error_ellipse(covariance, center=(1.0, 2.0), n_std=1.0)
-    assert ellipse.width > 0
-    assert ellipse.height > 0
+def test_compute_cramer_rao_bounds_rejects_wrong_sized_active_params():
+    fisher_matrix = np.eye(2)
+    with pytest.raises(AssertionError):
+        compute_cramer_rao_bounds(fisher_matrix, ["a", "b", "c"])
 
 
-def test_liv_spectral_index_fisher_ellipse_is_positive_definite():
-    result = liv_spectral_index_fisher_ellipse(snr=15.0)
-    covariance = result["covariance"]
+def test_compute_cramer_rao_bounds_stabilizes_ill_conditioned_matrix():
+    # Two nearly-identical rows -> huge condition number, should trigger ridge damping
+    # instead of crashing, and still return finite, positive error bounds.
+    fisher_matrix = np.array([[1.0, 1.0 - 1e-14], [1.0 - 1e-14, 1.0]])
+    error_bounds, covariance = compute_cramer_rao_bounds(fisher_matrix, ["a", "b"])
 
+    assert np.all(np.isfinite(error_bounds))
+    assert np.all(error_bounds > 0)
     assert covariance.shape == (2, 2)
-    eigenvalues = np.linalg.eigvalsh(covariance)
-    assert np.all(eigenvalues > 0), "Covariance from a valid Fisher matrix must be positive definite"
-    assert np.all(np.isfinite(result["sigma_theta"]))
