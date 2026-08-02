@@ -76,7 +76,14 @@ def generate_grb_event(physics_model: str = "standard", snr: float = DEFAULT_SNR
     if physics_model == "standard":
         flux_matrix = base_matrix
     elif physics_model == "liv":
-        eqg = 10.0 ** rng.uniform(17.0, 19.0)
+        # NOTE: apply_liv_to_spectrum's time delay scales as E/eqg. With energies in eV (1-1e6)
+        # and only ~100 time bins over 50s, physically-scaled eqg (~1e17-1e19, meant to
+        # approximate the Planck scale) produces a delay around 1e-32s per bin — unresolvably
+        # small, so LIV events end up pixel-identical to Standard ones. eqg here is instead
+        # chosen (1e-14 to 1e-13) so the delay spans roughly 0.5-5s at the highest energies,
+        # i.e. actually visible at this grid's resolution. This is a workaround for the
+        # grid/units mismatch, not a claim about the real quantum-gravity energy scale.
+        eqg = 10.0 ** rng.uniform(-14.0, -13.0)
         flux_matrix = apply_liv_to_spectrum(time_grid, energy_grid, eqg, base_matrix)
         exotic_params["eqg"] = eqg
     else:  # alp
