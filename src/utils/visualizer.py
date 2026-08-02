@@ -3,6 +3,9 @@ import matplotlib
 matplotlib.use("Agg")  # headless-safe backend; no display required
 import matplotlib.pyplot as plt
 
+# === Day 3 ===
+# Overlay/comparison heatmaps for Standard vs LIV vs ALP spectral-temporal profiles.
+
 
 def plot_spectral_temporal_heatmap(matrix_2d, energy_grid, time_grid, ax=None, title=None, cmap="inferno"):
     """Single 2D flux heatmap: log10(energy) on Y, time on X."""

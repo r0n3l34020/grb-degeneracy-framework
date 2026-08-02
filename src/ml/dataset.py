@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+# === Day 1 ===
 # Mock multimodal tensor schema.
 # Each sample is a (3, N_BINS) tensor: 3 channels = [Spectrum, LightCurve, Polarization],
 # each represented as a length-N_BINS 1D vector for now. This is a Day 1 stub only —
@@ -29,6 +30,7 @@ class GRBMultimodalDataset(Dataset):
         return sample, label
 
 
+# === Day 2 ===
 # --- Synthetic observational noise injector -------------------------------
 # Operates on numpy arrays (matches the physics simulation outputs in src/physics/*),
 # not torch tensors — conversion to tensors happens later in the pipeline (Day 4).
@@ -59,6 +61,7 @@ def inject_noise(signal: np.ndarray, snr: float, include_poisson: bool = True,
     return noisy
 
 
+# === Day 6 ===
 # --- Data validation --------------------------------------------------------
 # Edge-case physics parameters (e.g. near-zero t_decay, extreme E_break) can drive
 # the forward model into NaN/Inf territory. Catch that here before it silently
@@ -146,6 +149,7 @@ def load_dataset_pt(path):
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
+    # Day 1 demo
     dataset = GRBMultimodalDataset(num_samples=16)
     loader = DataLoader(dataset, batch_size=4, shuffle=True)
 
@@ -156,6 +160,7 @@ if __name__ == "__main__":
     )
     print("Day 1 dataset stub OK.")
 
+    # Day 2 demo
     signal = np.full(1000, 100.0)
     for snr in (2.0, 10.0, 50.0):
         noisy, noise_std = add_gaussian_noise(signal, snr)

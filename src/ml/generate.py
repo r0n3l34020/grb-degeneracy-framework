@@ -22,6 +22,7 @@ TIME_BINS = 100
 DEFAULT_SNR = 15.0
 
 
+# === Day 4 ===
 def synthetic_polarization_map(physics_model: str, energy_grid: np.ndarray, time_grid: np.ndarray,
                                 exotic_params: dict) -> np.ndarray:
     """
@@ -79,10 +80,11 @@ def generate_grb_event(physics_model: str = "standard", snr: float = DEFAULT_SNR
         # NOTE: apply_liv_to_spectrum's time delay scales as E/eqg. With energies in eV (1-1e6)
         # and only ~100 time bins over 50s, physically-scaled eqg (~1e17-1e19, meant to
         # approximate the Planck scale) produces a delay around 1e-32s per bin — unresolvably
-        # small, so LIV events end up pixel-identical to Standard ones. eqg here is instead
-        # chosen (1e-14 to 1e-13) so the delay spans roughly 0.5-5s at the highest energies,
-        # i.e. actually visible at this grid's resolution. This is a workaround for the
-        # grid/units mismatch, not a claim about the real quantum-gravity energy scale.
+        # small, so LIV events end up pixel-identical to Standard ones (found while building
+        # Day 7's Fisher analysis — the Fisher matrix was singular because of this). eqg here
+        # is instead chosen (1e-14 to 1e-13) so the delay spans roughly 0.5-5s at the highest
+        # energies, i.e. actually visible at this grid's resolution. This is a workaround for
+        # the grid/units mismatch, not a claim about the real quantum-gravity energy scale.
         eqg = 10.0 ** rng.uniform(-14.0, -13.0)
         flux_matrix = apply_liv_to_spectrum(time_grid, energy_grid, eqg, base_matrix)
         exotic_params["eqg"] = eqg
@@ -113,6 +115,7 @@ def generate_grb_event(physics_model: str = "standard", snr: float = DEFAULT_SNR
     return tensor, metadata
 
 
+# === Day 4 (batch generator) + Day 6 (HDF5 serialization) ===
 def generate_dataset(num_samples: int = 1000, snr: float = DEFAULT_SNR,
                       energy_bins: int = ENERGY_BINS, time_bins: int = TIME_BINS,
                       out_path: Path = None, seed: int = 0):
