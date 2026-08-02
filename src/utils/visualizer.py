@@ -60,6 +60,48 @@ def plot_overlay_contours(standard_matrix, liv_matrix, alp_matrix, energy_grid, 
     return fig
 
 
+# === Day 9 ===
+# Confusion-matrix and ROC-curve plots for the single- vs multi-modality baseline comparison.
+
+
+def plot_confusion_matrix(cm: np.ndarray, class_names, ax=None, title=None, cmap="Blues"):
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5, 4.5))
+    mesh = ax.imshow(cm, cmap=cmap)
+    ax.set_xticks(range(len(class_names)), labels=class_names)
+    ax.set_yticks(range(len(class_names)), labels=class_names)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    if title:
+        ax.set_title(title)
+    thresh = cm.max() / 2.0
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, str(cm[i, j]), ha="center", va="center",
+                     color="white" if cm[i, j] > thresh else "black")
+    return ax, mesh
+
+
+def plot_roc_curves(y_true: np.ndarray, y_proba: np.ndarray, class_names, ax=None, title=None):
+    """One-vs-rest ROC curve per class."""
+    from sklearn.metrics import roc_curve, auc
+    from sklearn.preprocessing import label_binarize
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5.5, 4.5))
+    y_true_bin = label_binarize(y_true, classes=range(len(class_names)))
+    for i, name in enumerate(class_names):
+        fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_proba[:, i])
+        ax.plot(fpr, tpr, label=f"{name} (AUC={auc(fpr, tpr):.3f})")
+    ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1)
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    if title:
+        ax.set_title(title)
+    ax.legend(fontsize=8)
+    return ax
+
+
 if __name__ == "__main__":
     from pathlib import Path
 
