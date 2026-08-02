@@ -1,7 +1,9 @@
 import sys
 import json
+import multiprocessing as mp
 from pathlib import Path
 
+import h5py
 import numpy as np
 
 # synchrotron.py does `from liv import ...` / `from alp import ...` (bare, not package-qualified),
@@ -143,6 +145,88 @@ def generate_dataset(num_samples: int = 1000, snr: float = DEFAULT_SNR,
         all_metadata.append(metadata)
 
     save_dataset_hdf5(tensors, labels, out_path)
+
+    metadata_path = out_path.with_suffix(".json")
+    with open(metadata_path, "w") as f:
+        json.dump(all_metadata, f, indent=2)
+
+    return out_path, all_metadata
+
+
+# === Day 8 ===
+# Parallelized generation of the full dataset suite, using multiprocessing.Pool.
+# 90,000 events (3, ENERGY_BINS, TIME_BINS) float32 would be ~11GB if held in memory
+# at once, so results are streamed into a resizable HDF5 dataset in fixed-size batches
+# instead of building one giant in-memory array.
+
+
+def _generate_one(task):
+    physics_model, snr, energy_bins, time_bins, seed = task
+    rng = np.random.default_rng(seed)
+    tensor, metadata = generate_grb_event(physics_model, snr=snr, energy_bins=energy_bins,
+                                           time_bins=time_bins, rng=rng)
+    validate_tensor(tensor, name=f"event seed={seed} ({physics_model}, snr={snr})")
+    return tensor, metadata
+
+
+def generate_dataset_suite(events_per_class: int = 30000, snr_levels=(5.0, 15.0, 50.0),
+                            energy_bins: int = ENERGY_BINS, time_bins: int = TIME_BINS,
+                            out_path: Path = None, seed: int = 0, n_workers: int = None,
+                            write_batch_size: int = 1000):
+    """
+    Generate `events_per_class` events for each of Standard/LIV/ALP (evenly split across
+    `snr_levels`) in parallel, and stream them to a consolidated HDF5 file.
+    """
+    out_path = Path(out_path) if out_path else (
+        Path(__file__).resolve().parents[2] / "data" / "synthetic" / "events_suite.h5"
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    n_per_combo = events_per_class // len(snr_levels)
+    tasks = []
+    task_seed = seed
+    for physics_model in PHYSICS_MODELS:
+        for snr in snr_levels:
+            for _ in range(n_per_combo):
+                tasks.append((physics_model, snr, energy_bins, time_bins, task_seed))
+                task_seed += 1
+
+    label_map = {name: i for i, name in enumerate(PHYSICS_MODELS)}
+    all_metadata = []
+    n_workers = n_workers or mp.cpu_count()
+
+    with h5py.File(out_path, "w") as f:
+        tensor_ds = f.create_dataset(
+            "tensors", shape=(0, 3, energy_bins, time_bins), maxshape=(None, 3, energy_bins, time_bins),
+            chunks=(min(write_batch_size, len(tasks)), 3, energy_bins, time_bins),
+            dtype=np.float32, compression="gzip", compression_opts=4,
+        )
+        label_ds = f.create_dataset("labels", shape=(0,), maxshape=(None,), dtype=np.int64)
+        f.attrs["label_map"] = json.dumps(label_map)
+
+        write_idx = 0
+        batch_tensors, batch_labels = [], []
+
+        def flush():
+            nonlocal write_idx, batch_tensors, batch_labels
+            if not batch_tensors:
+                return
+            n = len(batch_tensors)
+            tensor_ds.resize(write_idx + n, axis=0)
+            label_ds.resize(write_idx + n, axis=0)
+            tensor_ds[write_idx:write_idx + n] = np.stack(batch_tensors)
+            label_ds[write_idx:write_idx + n] = np.array(batch_labels, dtype=np.int64)
+            write_idx += n
+            batch_tensors, batch_labels = [], []
+
+        with mp.Pool(processes=n_workers) as pool:
+            for tensor, metadata in pool.imap_unordered(_generate_one, tasks, chunksize=100):
+                batch_tensors.append(tensor)
+                batch_labels.append(label_map[metadata["physics_model"]])
+                all_metadata.append(metadata)
+                if len(batch_tensors) >= write_batch_size:
+                    flush()
+        flush()
 
     metadata_path = out_path.with_suffix(".json")
     with open(metadata_path, "w") as f:
