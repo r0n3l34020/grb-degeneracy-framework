@@ -1,7 +1,8 @@
 import numpy as np
+from .constants import GRB_REDSHIFT, LIV_C_FACTOR
 
-def calculate_time_delay(energies, redshift=0.151, eqg=1e19):
-    c_factor = 3.33e-19
+def calculate_time_delay(energies, redshift=GRB_REDSHIFT, eqg=1e19):
+    c_factor = LIV_C_FACTOR
     proper_distance_factor = redshift * c_factor
 
     time_delay = (1 + redshift) * (energies / eqg) * proper_distance_factor

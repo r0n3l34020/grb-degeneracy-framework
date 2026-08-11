@@ -1,17 +1,22 @@
 import numpy
 import math
+from ..physics.constants import FISHER_NOISE_LEVEL, FISHER_COND_THRESHOLD
 
 def compute_fisher_matrix(jacobian_dict, active_params, snr):
-    noise_level_value = 1e-2
+    noise_level_value = FISHER_NOISE_LEVEL
     noise_variance_scalar = noise_level_value / (snr ** 2)
     data_shape = next(iter(jacobian_dict.values())).shape
     sigma_squared = numpy.full((data_shape), noise_variance_scalar)
     fisher_matrix = numpy.zeros((len(active_params), len(active_params)))
-    for i, key_i in enumerate(active_params):
-        deriv_i = jacobian_dict[key_i]
-        for j, key_j in enumerate(active_params):
-            deriv_j = jacobian_dict[key_j]
-            fisher_matrix[i, j] = numpy.sum((deriv_i * deriv_j) / sigma_squared)
+    n_params = len(active_params)
+    fisher_matrix = numpy.zeros((n_params, n_params))
+
+    for i, key1 in enumerate(active_params):
+        for j, key2 in enumerate(active_params):
+            if key1 in jacobian_dict and key2 in jacobian_dict:
+                d1 = jacobian_dict[key1]
+                d2 = jacobian_dict[key2]    
+                fisher_matrix[i, j] = (snr ** 2) * numpy.sum(d1 * d2)
     return fisher_matrix
 
 def fisher_estimator_pipeline(random_param, mode):
@@ -34,7 +39,7 @@ def compute_cramer_rao_bounds(fisher_matrix, active_params):
 
     condition_number = numpy.linalg.cond(fisher_matrix)
 
-    if condition_number >= 1e12:
+    if condition_number >= FISHER_COND_THRESHOLD:
         print(f"[WARNING] Ill-conditioned Fisher matrix detected (cond: {condition_number:.2e}). Applying ridge stabilization...")
         lambda_damping = 1e-6 * numpy.trace(fisher_matrix) / fisher_matrix.shape[0]
         fisher_matrix = fisher_matrix + lambda_damping * numpy.eye(fisher_matrix.shape[0])

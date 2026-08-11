@@ -1,7 +1,7 @@
 import numpy
-import matplotlib.pyplot as plt
 from pathlib import Path
 import shutil
+from .constants import ALP_PHASE_CONVERSION, EV_TO_ANGSTORMS, DEFAULT_BASE_PD, IXPE_MODULATION_FACTOR_MU
 from .synchrotron import simulate_grb_emission
 from .liv import apply_liv_to_spectrum
 from .alp import apply_alp_to_spectrum, photon_survival_probability
@@ -11,7 +11,7 @@ from ..utils.fisher import compute_cramer_rao_bounds, compute_fisher_matrix, fis
 import concurrent.futures
 
 scenario_mode = ["ssc", "alp", "liv"]
-target_folder = Path('C:/Users/Ronel/Desktop/multi-modal-grb-classifier/grb-degeneracy-framework/grb-degeneracy-framework/data/synthetic/test_datasets')
+target_folder = Path('C:/Users/Ronel/Desktop/grb-degeneracy-framework/data/synthetic/test_datasets')
 
 parameter_bounds = {
     "E_break": (1e+5, 1e+6),
@@ -26,37 +26,18 @@ parameter_bounds = {
     "E_BV": (0.01, 0.50),
 }
 
-target_params = [
-    "E_break",
-    "g_ag",
-    "B",
-    "L",
-    "eqg",
-]
-
-snr_choices = [5, 15, 50]
-repeats = 20
-snr_pool = numpy.repeat(snr_choices, repeats)
-snr_range = numpy.random.default_rng()
-snr_range.shuffle(snr_pool)
-
-obs_mode_choices = ["spectral_only", "spectral_temporal", "full_polarimetric"]
-obs_mode_pool = numpy.repeat(obs_mode_choices, repeats)
-obs_mode_range = numpy.random.default_rng()
-obs_mode_range.shuffle(obs_mode_pool)
-
 def compute_polarization_profile(initial_energy_grid, time_grid, mode, g_ag, B, L):
-    base_pd = 0.15
+    base_pd = DEFAULT_BASE_PD
 
     if mode in ("ssc", "liv"):
         pd_matrix = base_pd + (0 * initial_energy_grid[None, :]) + (0 * time_grid)
         pa_matrix = numpy.zeros_like(time_grid)
     else:
-        oscillation_phase = (B * L * g_ag * (1.52 * (10 ** 13))) / initial_energy_grid
+        oscillation_phase = (B * L * g_ag * (ALP_PHASE_CONVERSION * (10 ** 13))) / initial_energy_grid
         pd_1d = base_pd * (1.0 - (0.5 * oscillation_phase * (numpy.sin(oscillation_phase))**2))
         pa_1d = (numpy.pi / 4) * numpy.sin(2 * oscillation_phase)
-        pd_matrix = pd_1d[None, :] + numpy.zeros_like(time_grid)
-        pa_matrix = pa_1d[None, :] + numpy.zeros_like(time_grid)
+        pd_matrix = pd_1d[:, None] + numpy.zeros_like(time_grid)
+        pa_matrix = pa_1d[:, None] + numpy.zeros_like(time_grid)
 
     return pd_matrix, pa_matrix
 
@@ -106,7 +87,7 @@ def generate_grb_event(random_param, mode):
     observation_matrix_3d = numpy.stack([spectrum, pa_matrix, pd_matrix], axis=0)
     assert observation_matrix_3d.shape == (3, 500, 500), f"Error, expected shape (3, 500, 500), but got {observation_matrix_3d.shape}"
 
-    wavelength = 12398.4 / initial_energy_grid
+    wavelength = EV_TO_ANGSTORMS / initial_energy_grid
     x = 1 / wavelength
 
     a_x = numpy.zeros_like(x)
@@ -157,17 +138,19 @@ def compute_flux_jacobian(active_params, mode, obs_mode, base_param):
     epsilon = 1e-4
     jacobian_dict = {}
 
-    ignored_keys = {
-        "initial_energy_grid", "initial_time_grid", "energy_grid", "time_grid", 
-        "f_E_func", "alpha", "beta", "f_break", "A", "p", "t_rise", "t_decay"
-    }
-
-    target_params = [k for k in active_params.keys() if k not in ["initial_energy_grid", "initial_time_grid", "energy_grid", "time_grid", "f_E_func", "alpha", "beta", "f_break", "A", "p", "t_rise", "t_decay"]]
-
     init_en = base_param.get("initial_energy_grid")
     init_tm = base_param.get("initial_time_grid")
     en_grid = base_param.get("energy_grid")
     tm_grid = base_param.get("time_grid")
+
+    base_flux_raw = generate_grb_event(base_param, mode)
+
+    if obs_mode == "spectral_only":
+        base_flux = numpy.mean(base_flux_raw, axis=(0, 2))
+    elif obs_mode == "spectral_temporal":
+        base_flux = base_flux_raw[0, :, :]
+    elif obs_mode == "full_polarimetric":
+        base_flux = base_flux_raw
 
     for key in active_params:
         val = base_param[key]
@@ -180,8 +163,7 @@ def compute_flux_jacobian(active_params, mode, obs_mode, base_param):
         param_up["initial_time_grid"] = init_tm
         param_up["energy_grid"] = en_grid
         param_up["time_grid"] = tm_grid
-
-        flux_up = generate_grb_event(param_up, mode)
+        flux_up_raw = generate_grb_event(param_up, mode)
 
         param_down = base_param.copy()
         param_down[key] -= delta
@@ -189,24 +171,36 @@ def compute_flux_jacobian(active_params, mode, obs_mode, base_param):
         param_down["initial_time_grid"] = init_tm
         param_down["energy_grid"] = en_grid
         param_down["time_grid"] = tm_grid
-
-        flux_down = generate_grb_event(param_down, mode)
+        flux_down_raw = generate_grb_event(param_down, mode)
 
         if obs_mode == "spectral_only":
-            new_flux_up = numpy.mean(flux_up, axis=(0, 2))
-            new_flux_down = numpy.mean(flux_down, axis=(0, 2))
+            new_flux_up = numpy.mean(flux_up_raw, axis=(0, 2))
+            new_flux_down = numpy.mean(flux_down_raw, axis=(0, 2))
         elif obs_mode == "spectral_temporal":
-            new_flux_up = flux_up[0, :, :]
-            new_flux_down = flux_down[0, :, :]
+            new_flux_up = flux_up_raw[0, :, :]
+            new_flux_down = flux_down_raw[0, :, :]
         elif obs_mode == "full_polarimetric":
-            new_flux_up = flux_up
-            new_flux_down = flux_down
+            new_flux_up = flux_up_raw
+            new_flux_down = flux_down_raw
         
-        derivative_matrix = (new_flux_up - new_flux_down) / (2 * delta)
+        derivative_matrix = (new_flux_up - new_flux_down) / (2 * epsilon * (base_flux + 1e-30))
         jacobian_dict[key] = derivative_matrix
+
+        grad_std = numpy.std(derivative_matrix)
+        if grad_std < 1e-12:
+            continue
     return jacobian_dict
 
-def scale_polarimetric_noise(flux_matrix, mode="full_polarimetric", mu=0.2):
+def get_effective_params(active_params, mode, obs_mode):
+    effective = list(active_params)
+
+    if obs_mode == "spectral_only":
+        for inactive_key in ["liv_scale", "alp_coupling"]:
+            if inactive_key in effective:
+                effective.remove(inactive_key)
+    return effective
+
+def scale_polarimetric_noise(flux_matrix, mode="full_polarimetric", mu=IXPE_MODULATION_FACTOR_MU):
     sigma_flux = numpy.sqrt(numpy.abs(flux_matrix) + 1.0)
 
     if mode == "full_polarimetric":
@@ -229,23 +223,41 @@ def process_single_simulation(args):
         active_params_dict = fisher_estimator_pipeline(random_param, mode)
         active_keys = list(active_params_dict.keys())
 
+        print(f"[DEBUG] Computing effective parameters for event {int(i)+1}...")
+        effective_params = get_effective_params(active_params_dict, mode, obs_mode)
+
         print(f"[DEBUG] Computing Jacobian for event {int(i)+1}...")
-        jacobian_observation_matrix_3d = compute_flux_jacobian(active_params_dict, mode, obs_mode, random_param)
+        jacobian_observation_matrix_3d = compute_flux_jacobian(effective_params, mode, obs_mode, random_param)
 
         print(f"[DEBUG] Computing Fisher Matrix for event {int(i)+1}...")
-        fisher_jacobian_observation_matrix_3d = compute_fisher_matrix(jacobian_observation_matrix_3d, active_keys, snr)
+        fisher_jacobian_observation_matrix_3d = compute_fisher_matrix(jacobian_observation_matrix_3d, effective_params, snr)
 
         print(f"[DEBUG] Extracting Cramer-Rao bounds for event {int(i)+1}...")
         cramer_rao_extraction, covariance_matrix_final = compute_cramer_rao_bounds(fisher_jacobian_observation_matrix_3d, active_keys)
 
-        final_filename = f"simulation_{i}_{obs_mode}.npy"
-        numpy.savez(target_folder / final_filename, fisher_jacobian_observation_matrix_3d, covariance_matrix_final, cramer_rao_extraction)
+        """
+        batch_folder = target_folder / f"batch_{i // 1000}"
+        if batch_folder.exists():
+            shutil.rmtree(batch_folder)
+        batch_folder.mkdir(parents=True, exist_ok=True)
+        """
+
+        final_filename = f"simulation_{i}_{obs_mode}.npz"
+        numpy.savez(
+            target_folder / final_filename,
+            observation=observation_matrix_3d,
+            label=mode,
+            snr=snr,
+            obs_mode=obs_mode,
+            fisher=fisher_jacobian_observation_matrix_3d, 
+            covariance=covariance_matrix_final, 
+            cramer=cramer_rao_extraction
+            )
 
         print(f"[SUCCESS] Saved No.{int(i)+1} for all 3 outputs")
     except Exception as e:
         print(f"[WORKER ERROR] Failed on event {i}: {str(e)}")
         raise e
-
 
 # Main Generation Script
 
@@ -262,14 +274,26 @@ if __name__ == "__main__":
     initial_energy_grid = numpy.logspace(0, 6, 500)
     energy_grid, time_grid = numpy.meshgrid(initial_energy_grid, initial_time_grid)
 
+    num_samples = 60
     print("[INFO] Generating LHS parameter batch...")
-    sampled_batch = generate_lhs_parameter_batch(num_samples=60, parameter_bounds=parameter_bounds)
+    sampled_batch = generate_lhs_parameter_batch(num_samples=num_samples, parameter_bounds=parameter_bounds)
+
+    rng = numpy.random.default_rng(42)
+
+    snr_choices = [5, 15, 50]
+    obs_mode_choices = ["spectral_only", "spectral_temporal", "full_polarimetric"]
+    repeats = num_samples // len(snr_choices)
+    snr_pool = numpy.repeat(snr_choices, repeats)
+    obs_mode_pool = numpy.repeat(obs_mode_choices, repeats)
+
+    rng.shuffle(snr_pool)
+    rng.shuffle(obs_mode_pool)
 
     tasks = []
     for i, random_param in enumerate(sampled_batch):
         mode = scenario_mode[i % len(scenario_mode)]
-        snr = snr_pool[i]
-        obs_mode = obs_mode_pool[i]
+        snr = int(snr_pool[i])
+        obs_mode = str(obs_mode_pool[i])
 
         random_param["initial_energy_grid"] = initial_energy_grid
         random_param["initial_time_grid"] = initial_time_grid
@@ -277,5 +301,6 @@ if __name__ == "__main__":
         random_param["time_grid"] = time_grid
 
         tasks.append((i, random_param, mode, snr, obs_mode))
+
     with concurrent.futures.ProcessPoolExecutor() as executor:
         executor.map(process_single_simulation, tasks)
