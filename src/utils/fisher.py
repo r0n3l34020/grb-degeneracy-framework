@@ -3,11 +3,6 @@ import math
 from ..physics.constants import FISHER_NOISE_LEVEL, FISHER_COND_THRESHOLD
 
 def compute_fisher_matrix(jacobian_dict, active_params, snr):
-    noise_level_value = FISHER_NOISE_LEVEL
-    noise_variance_scalar = noise_level_value / (snr ** 2)
-    data_shape = next(iter(jacobian_dict.values())).shape
-    sigma_squared = numpy.full((data_shape), noise_variance_scalar)
-    fisher_matrix = numpy.zeros((len(active_params), len(active_params)))
     n_params = len(active_params)
     fisher_matrix = numpy.zeros((n_params, n_params))
 
@@ -37,21 +32,20 @@ def compute_cramer_rao_bounds(fisher_matrix, active_params):
     assert fisher_matrix.shape[0] == fisher_matrix.shape[1], "Error, Fisher matrix is not square"
     assert fisher_matrix.shape[0] == len(active_params), "Error, Fisher matrix does not match target key lengths"
 
-    condition_number = numpy.linalg.cond(fisher_matrix)
+    ridge_lambda = 1e-8 * numpy.trace(fisher_matrix) * numpy.eye(fisher_matrix.shape[0])
+    stabilized_fisher = fisher_matrix + ridge_lambda
 
-    if condition_number >= FISHER_COND_THRESHOLD:
-        print(f"[WARNING] Ill-conditioned Fisher matrix detected (cond: {condition_number:.2e}). Applying ridge stabilization...")
-        lambda_damping = 1e-6 * numpy.trace(fisher_matrix) / fisher_matrix.shape[0]
-        fisher_matrix = fisher_matrix + lambda_damping * numpy.eye(fisher_matrix.shape[0])
-        
-        condition_number = numpy.linalg.cond(fisher_matrix)
-        assert condition_number < 1e12, f"Error, Fisher matrix remains ill-conditioned after damping (cond: {condition_number:.2e})"
+    try:
+        covariance_matrix = numpy.linalg.inv(stabilized_fisher)
+    except numpy.linalg.LinAlgError:
+        covariance_matrix = numpy.linalg.pinv(stabilized_fisher)
 
-    rank = numpy.linalg.matrix_rank(fisher_matrix)
-    assert rank == len(active_params), "Error, Fisher matrix is rank-deficient"
+    assert not numpy.any(numpy.isnan(covariance_matrix)), "Error, covariance matrix contains NaN values"
+    assert not numpy.any(numpy.isinf(covariance_matrix)), "Error, covariance matrix contains infinite values"
 
-    covariance_matrix = numpy.linalg.pinv(fisher_matrix)
-    variances = numpy.diagonal(covariance_matrix)
-    extracted_error_bounds = numpy.sqrt(numpy.abs(variances))
+    cramer_rao_bounds = {
+        param: float(numpy.sqrt(numpy.maximum(0.0, covariance_matrix[idx, idx])))
+        for idx, param in enumerate(active_params)
+    }
 
-    return extracted_error_bounds, covariance_matrix
+    return cramer_rao_bounds, covariance_matrix

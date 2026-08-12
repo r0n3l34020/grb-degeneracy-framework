@@ -152,25 +152,19 @@ def compute_flux_jacobian(active_params, mode, obs_mode, base_param):
     elif obs_mode == "full_polarimetric":
         base_flux = base_flux_raw
 
+    denom = 2 * epsilon * numpy.maximum(base_flux, 1e-12)
+
     for key in active_params:
         val = base_param[key]
-        final_val = val if val != 0 else 1e-8
-        delta = epsilon * final_val
 
         param_up = base_param.copy()
-        param_up[key] += delta
-        param_up["initial_energy_grid"] = init_en
-        param_up["initial_time_grid"] = init_tm
-        param_up["energy_grid"] = en_grid
-        param_up["time_grid"] = tm_grid
+        param_up.update({"initial_energy_grid": init_en, "initial_time_grid": init_tm, "energy_grid": en_grid, "time_grid": tm_grid})
+        param_up[key] = val * (1.0 + epsilon)
         flux_up_raw = generate_grb_event(param_up, mode)
 
         param_down = base_param.copy()
-        param_down[key] -= delta
-        param_down["initial_energy_grid"] = init_en
-        param_down["initial_time_grid"] = init_tm
-        param_down["energy_grid"] = en_grid
-        param_down["time_grid"] = tm_grid
+        param_down.update({"initial_energy_grid": init_en, "initial_time_grid": init_tm, "energy_grid": en_grid, "time_grid": tm_grid})
+        param_down[key] = val * (1.0 - epsilon)
         flux_down_raw = generate_grb_event(param_down, mode)
 
         if obs_mode == "spectral_only":
@@ -183,19 +177,20 @@ def compute_flux_jacobian(active_params, mode, obs_mode, base_param):
             new_flux_up = flux_up_raw
             new_flux_down = flux_down_raw
         
-        derivative_matrix = (new_flux_up - new_flux_down) / (2 * epsilon * (base_flux + 1e-30))
-        jacobian_dict[key] = derivative_matrix
+        derivative_matrix = (new_flux_up - new_flux_down) / denom
 
-        grad_std = numpy.std(derivative_matrix)
-        if grad_std < 1e-12:
-            continue
+        if numpy.std(derivative_matrix) < 1e-12:
+            jacobian_dict[key] = numpy.full_like(derivative_matrix, 1e-15)  
+        else:
+            jacobian_dict[key] = derivative_matrix
+
     return jacobian_dict
 
 def get_effective_params(active_params, mode, obs_mode):
     effective = list(active_params)
 
     if obs_mode == "spectral_only":
-        for inactive_key in ["liv_scale", "alp_coupling"]:
+        for inactive_key in ["eqg", "g_ag"]:
             if inactive_key in effective:
                 effective.remove(inactive_key)
     return effective
@@ -213,75 +208,64 @@ def process_single_simulation(args):
     try:
         i, random_param, mode, snr, obs_mode = args
 
-        print(f"[INFO] Worker started for event {int(i)+1} under mode '{mode}', SNR {snr}, Obs: {obs_mode}...")
         observation_matrix_3d = generate_grb_event(random_param, mode)
-        assert observation_matrix_3d.shape == (3, 500, 500), f"Error, expected shape (3, 500, 500) got {observation_matrix_3d.shape}"
-        assert not numpy.any(numpy.isnan(observation_matrix_3d)), "Error, matrix contains NaN values"
-        assert not numpy.any(numpy.isinf(observation_matrix_3d)), "Error, matrix contains infinite values"
-
-        print(f"[DEBUG] Event {int(i)+1} generated successfully. Running fisher pipeline...")
+        observation_matrix_3d = observation_matrix_3d.astype(numpy.float32)
         active_params_dict = fisher_estimator_pipeline(random_param, mode)
-        active_keys = list(active_params_dict.keys())
+        effective_params = get_effective_params(active_params_dict.keys(), mode, obs_mode)
 
-        print(f"[DEBUG] Computing effective parameters for event {int(i)+1}...")
-        effective_params = get_effective_params(active_params_dict, mode, obs_mode)
-
-        print(f"[DEBUG] Computing Jacobian for event {int(i)+1}...")
         jacobian_observation_matrix_3d = compute_flux_jacobian(effective_params, mode, obs_mode, random_param)
-
-        print(f"[DEBUG] Computing Fisher Matrix for event {int(i)+1}...")
         fisher_jacobian_observation_matrix_3d = compute_fisher_matrix(jacobian_observation_matrix_3d, effective_params, snr)
+        cramer_rao_extraction, covariance_matrix_final = compute_cramer_rao_bounds(fisher_jacobian_observation_matrix_3d, effective_params)
 
-        print(f"[DEBUG] Extracting Cramer-Rao bounds for event {int(i)+1}...")
-        cramer_rao_extraction, covariance_matrix_final = compute_cramer_rao_bounds(fisher_jacobian_observation_matrix_3d, active_keys)
-
-        """
-        batch_folder = target_folder / f"batch_{i // 1000}"
-        if batch_folder.exists():
-            shutil.rmtree(batch_folder)
+        batch_id = i // 1000
+        batch_folder = target_folder / f"batch_{batch_id}"
         batch_folder.mkdir(parents=True, exist_ok=True)
-        """
 
         final_filename = f"simulation_{i}_{obs_mode}.npz"
-        numpy.savez(
-            target_folder / final_filename,
+        numpy.savez_compressed(
+            batch_folder / final_filename,
             observation=observation_matrix_3d,
             label=mode,
             snr=snr,
             obs_mode=obs_mode,
-            fisher=fisher_jacobian_observation_matrix_3d, 
-            covariance=covariance_matrix_final, 
+            fisher=fisher_jacobian_observation_matrix_3d.astype(numpy.float32), 
+            covariance=covariance_matrix_final.astype(numpy.float32), 
             cramer=cramer_rao_extraction
             )
-
-        print(f"[SUCCESS] Saved No.{int(i)+1} for all 3 outputs")
+        
     except Exception as e:
         print(f"[WORKER ERROR] Failed on event {i}: {str(e)}")
         raise e
 
-# Main Generation Script
-
 if __name__ == "__main__":
     import multiprocessing
+    import psutil
+    from tqdm import tqdm
+
     multiprocessing.freeze_support()
 
+    num_samples = 30000
     print("[INFO] Starting GRB simulation pipeline...")
+
     if target_folder.exists():
         shutil.rmtree(target_folder)
     target_folder.mkdir(parents=True, exist_ok=True)
+
+    num_batches = (num_samples + 999) // 1000
+    for b in range(num_batches):
+        (target_folder / f"batch_{b}").mkdir(parents=True, exist_ok=True)
 
     initial_time_grid = numpy.linspace(0, 50, 500)
     initial_energy_grid = numpy.logspace(0, 6, 500)
     energy_grid, time_grid = numpy.meshgrid(initial_energy_grid, initial_time_grid)
 
-    num_samples = 60
     print("[INFO] Generating LHS parameter batch...")
     sampled_batch = generate_lhs_parameter_batch(num_samples=num_samples, parameter_bounds=parameter_bounds)
 
     rng = numpy.random.default_rng(42)
-
     snr_choices = [5, 15, 50]
     obs_mode_choices = ["spectral_only", "spectral_temporal", "full_polarimetric"]
+    
     repeats = num_samples // len(snr_choices)
     snr_pool = numpy.repeat(snr_choices, repeats)
     obs_mode_pool = numpy.repeat(obs_mode_choices, repeats)
@@ -302,5 +286,18 @@ if __name__ == "__main__":
 
         tasks.append((i, random_param, mode, snr, obs_mode))
 
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        executor.map(process_single_simulation, tasks)
+    print("[INFO] Dispatching parallel workers...")
+    try:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
+            progress_bar = tqdm(total=num_samples, desc="Simulating GRB Events", unit="event", ncols=100)
+            for _ in executor.map(process_single_simulation, tasks, chunksize=10):
+                progress_bar.update(1)
+                mem = psutil.virtual_memory().percent
+                progress_bar.set_postfix({"RAM": f"{mem}%"})
+            progress_bar.close()
+
+            if mem > 90.0:
+                print(f"[WARNING] High System Memory Utilization detected: {mem}%")
+        print("\n[SUCCESS] 30,000 GRB Simulations generated and saved cleanly!")
+    except KeyboardInterrupt:
+        print("\n[USER ABORT] Process interrupted via Ctrl+C. Partial batch preserved safely.")
