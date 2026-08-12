@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 
 # Directories
-data/synthetic/test_datasets/
+data/
 
 # C extensions
 *.so
