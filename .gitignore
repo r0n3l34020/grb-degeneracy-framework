@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Directories
+data/synthetic/test_datasets/
+
 # C extensions
 *.so
 
