@@ -32,7 +32,7 @@ This project evolved from a direct empirical parameter-fitting task on GRB 22100
 grb-degeneracy-framework/
 ├── checkpoints/
 │   └── grb_model_best.pt
-├── data/
+├── data/                    # The data/ directory contents are excluded from version control due to file size constraints   │   │                           and are dynamically generated via the local execution pipeline.
 │   ├── processed/
 │   │   ├── target_event.h5
 │   ├── raw/
