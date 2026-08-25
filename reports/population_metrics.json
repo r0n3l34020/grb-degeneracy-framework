@@ -1,0 +1,8 @@
+{
+    "total_test_events": 6000,
+    "mean_delta_i_nats": 0.2951858639717102,
+    "median_delta_i_nats": 0.21595728397369385,
+    "std_dev_nats": 0.24109981954097748,
+    "ci95_lower": 0.28908519681078554,
+    "ci95_upper": 0.30128653113263487
+}
