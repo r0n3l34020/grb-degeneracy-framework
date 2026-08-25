@@ -1,0 +1,25 @@
+# Core Numerical & Scientific Computing
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Deep Learning Framework
+torch>=2.0.0
+
+# Simulation-Based Inference & Probabilistic Modeling
+sbi>=0.21.0
+
+# Data I/O & File Formats
+h5py>=3.8.0
+
+# Visualization & Diagnostics
+matplotlib>=3.7.0
+
+# Progress Bars & Utility Tools
+tqdm>=4.65.0
+
+# Unit Testing Infrastructure
+pytest>=7.3.0
+
+# Data Wrangling & Observational Astronomy Tools
+pandas>=2.0.0
+astropy>=5.0.0
